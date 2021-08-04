@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 
 interface IUniswapV2Factory {
     function getPair(address tokenA, address tokenB)
@@ -51,6 +52,23 @@ interface IDInterest {
     function depositsLength() external view returns (uint256);
 
     function depositNFT() external view returns (address);
+
+    function getDeposit(uint256 depositID)
+        external
+        view
+        returns (Deposit memory);
+
+    struct Deposit {
+        uint256 amount; // Amount of stablecoin deposited
+        uint256 maturationTimestamp; // Unix timestamp after which the deposit may be withdrawn, in seconds
+        uint256 interestOwed; // Deficit incurred to the pool at time of deposit
+        uint256 initialMoneyMarketIncomeIndex; // Money market's income index at time of deposit
+        bool active; // True if not yet withdrawn, false if withdrawn
+        bool finalSurplusIsNegative;
+        uint256 finalSurplusAmount; // Surplus remaining after withdrawal
+        uint256 mintMPHAmount; // Amount of MPH minted to user
+        uint256 depositTimestamp; // Unix timestamp at time of deposit, in seconds
+    }
 }
 
 interface IZCB {
@@ -67,27 +85,21 @@ interface IFractionalDeposit {
     function transferOwnership(address newOwner) external;
 }
 
-contract ZCB_Sushi_Zap {
+contract ZCB_Sushi_Zap is ERC721Holder {
     using SafeERC20 for IERC20;
 
-    IDInterest public constant DInterest =
-        IDInterest(0x19E10132841616CE4790920d5f94B8571F9b9341);
     IERC20 public constant MPH =
         IERC20(0x8888801aF4d980682e47f1A9036e589479e835C5);
-    IERC721 public depositNFT;
 
     IUniswapV2Factory private constant sushiswapFactory =
         IUniswapV2Factory(0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac);
     IUniswapV2Router02 private constant sushiswapRouter =
         IUniswapV2Router02(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
 
-    constructor() {
-        depositNFT = IERC721(DInterest.depositNFT());
-    }
-
     function Zap(
         address fromToken,
         uint256 amountIn,
+        address DInterest,
         uint256 maturationTimestamp,
         address ZCB
     ) external returns (uint256 lpReceived) {
@@ -108,6 +120,7 @@ contract ZCB_Sushi_Zap {
             fromToken,
             amtToDepositInFIRB,
             ZCB,
+            DInterest,
             maturationTimestamp
         );
 
@@ -141,21 +154,28 @@ contract ZCB_Sushi_Zap {
         address fromToken,
         uint256 amtToDepositInFIRB,
         address ZCB,
+        address DInterest,
         uint256 maturationTimestamp
     ) internal returns (uint256 ZCBMinted) {
         // approve FIRB to spend fromTokens
         _approve(fromToken, address(DInterest), amtToDepositInFIRB);
 
-        // deposit fromTokens into FIRB
-        // get NFT + MPH rewards
-        DInterest.deposit(amtToDepositInFIRB, maturationTimestamp);
-        uint256 nftID = DInterest.depositsLength();
-        uint256 mphRewardsReceived = MPH.balanceOf(address(this));
+        /// deposit fromTokens into FIRB
+        // get NFT
+        // MPH rewards gets vested
+        IDInterest(DInterest).deposit(amtToDepositInFIRB, maturationTimestamp);
+        uint256 nftID = IDInterest(DInterest).depositsLength();
+        IDInterest.Deposit memory depositStruct = IDInterest(DInterest)
+            .getDeposit(nftID);
+        uint256 mphRequired = depositStruct.mintMPHAmount;
+        // get MPH from user
+        MPH.safeTransferFrom(msg.sender, address(this), mphRequired);
 
         // approve ZCB to spend NFT
-        depositNFT.setApprovalForAll(ZCB, true);
+        address depositNFT = IDInterest(DInterest).depositNFT();
+        IERC721(depositNFT).setApprovalForAll(ZCB, true);
         // approve ZCB to spend MPH
-        _approve(address(MPH), ZCB, mphRewardsReceived);
+        _approve(address(MPH), ZCB, mphRequired);
 
         // deposit NFT + MPH to ZCB
         address fractionalDepositAddress;
