@@ -9,7 +9,6 @@ import "hardhat-deploy";
 import "hardhat-deploy-ethers";
 import "hardhat-abi-exporter";
 import "hardhat-tracer";
-import "@tenderly/hardhat-tenderly";
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -24,27 +23,15 @@ const config: HardhatUserConfig = {
   namedAccounts: {
     deployer: 0,
   },
-  defaultNetwork: "local",
   networks: {
-    local: {
-      url: "http://127.0.0.1:8545",
-    },
     hardhat: {
       forking: {
-        url: process.env.POLYGON_NODE_URL!,
+        url: process.env.MAINNET_NODE_URL!,
       },
-    },
-    polygon: {
-      url: process.env.POLYGON_NODE_URL!,
-      accounts: [process.env.DEPLOYER_PRIVATE_KEY!],
     },
   },
   mocha: {
     timeout: 200000,
-  },
-  tenderly: {
-    username: process.env.TENDERLY_USERNAME!,
-    project: process.env.TENDERLY_PROJECT!,
   },
 };
 
